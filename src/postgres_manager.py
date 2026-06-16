@@ -12,13 +12,22 @@ class PostgresManager:
     """Gerencia operações com PostgreSQL para usuários"""
 
     def __init__(self):
-        """Inicializa configuração do banco de dados"""
+        """Inicializa configuração do banco de dados a partir de variáveis de ambiente"""
+        host = os.getenv('DB_HOST')
+        password = os.getenv('DB_PASSWORD')
+
+        if not host or not password:
+            raise EnvironmentError(
+                "As variáveis de ambiente DB_HOST e DB_PASSWORD são obrigatórias. "
+                "Configure-as no Coolify (Settings → Environment Variables) antes de iniciar a aplicação."
+            )
+
         self.db_config = {
-            'host': os.getenv('DB_HOST', 'u48cw44ccwg4sowco4044goc'),
-            'port': int(os.getenv('DB_PORT', 5432)),
+            'host': host,
+            'port': int(os.getenv('DB_PORT', '5432')),
             'database': os.getenv('DB_NAME', 'postgres'),
             'user': os.getenv('DB_USER', 'postgres'),
-            'password': os.getenv('DB_PASSWORD', 'poMaf572450+@')
+            'password': password
         }
 
     def get_connection(self):
