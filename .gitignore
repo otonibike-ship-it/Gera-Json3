@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.env/
+ENV/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Streamlit
+.streamlit/
+!.streamlit/config.toml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+nul
+
+# Keep img folder with logo
+!img/
+!img/logo_S2.png
+
+# IMPORTANTE: Manter arquivo de credenciais e configuração de autenticação
+# Estes arquivos NÃO devem ser ignorados pois contêm dados essenciais
+# Sincronização bidirecional + sistema de logging protege contra perda de dados
+!credentials.json
+!config.yaml
+
+# Log de usuários (rastreamento de criações/modificações)
+usuarios_log.txt
+
+# Template files no longer needed (keeping for reference only)
+credentials.json.TEMPLATE
+config.yaml.TEMPLATE

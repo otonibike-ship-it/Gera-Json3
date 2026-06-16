@@ -1,0 +1,103 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Python cache and compiled files
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+*.egg-info
+.eggs
+dist
+build
+
+# Virtual environments
+venv
+env
+ENV
+.venv
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+.AppleDouble
+.LSOverride
+
+# Python environment files
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Streamlit cache (mas MANTER config.toml!)
+.streamlit/cache
+.streamlit/secrets.toml
+# NÃO ignorar: .streamlit/config.toml é necessário!
+!.streamlit/config.toml
+
+# Documentation (not needed in container)
+docs/
+Documentation/
+README.md
+*.md
+LICENSE
+
+# Test files
+test_*.py
+*_test.py
+tests/
+
+# Temporary and backup files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.log
+nul
+
+# n8n and Postman (not needed in container)
+n8n_workflow_hybris.json
+Postman_Collection_Hybris.json
+
+# Example files
+exemplo_gerado_*.json
+
+# Development tools
+.pre-commit-config.yaml
+.editorconfig
+
+# Node modules (if any npm packages were used)
+node_modules/
+
+# Keep only essential files
+!src/
+!tools/
+!img/
+!requirements.txt
+
+# Incluir credenciais no container (são essenciais para funcionamento)
+!credentials.json
+!config.yaml
+
+# Ignorar templates (não são necessários no container)
+credentials.json.TEMPLATE
+config.yaml.TEMPLATE
