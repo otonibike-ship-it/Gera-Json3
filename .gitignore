@@ -13,8 +13,8 @@ ENV/
 dist/
 build/
 
-# Streamlit
-.streamlit/
+# Streamlit (ignorar tudo exceto config.toml)
+.streamlit/*
 !.streamlit/config.toml
 
 # IDE

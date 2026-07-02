@@ -28,12 +28,12 @@ COPY img/ ./img/
 # 3. Configuração do Streamlit
 COPY .streamlit/ ./.streamlit/
 
-# 4. Arquivos de autenticação e configuração (auto-gerados)
-COPY credentials.json .
-COPY config.yaml .
-
-# 5. Scripts de diagnóstico e manutenção (reorganizados em tools/)
+# 4. Scripts de diagnóstico e manutenção
 COPY tools/ ./tools/
+
+# Nota: credentials.json e config.yaml são gerados automaticamente
+# em tempo de execução a partir do PostgreSQL (fonte de verdade).
+# Não são copiados da imagem — não existem em tempo de build.
 
 # ========================================================================
 # Configuração final
