@@ -2241,10 +2241,14 @@ if transactions_data and not st.session_state.json_generated:
                                 if _ok:
                                     _saved += 1
                             print(f"[db] {_saved} transação(ões) salva(s) para pedido {_num_pedido}")
+                            st.session_state["_db_save_count"] = _saved
+                            st.session_state["_db_save_pedido"] = _num_pedido
                         except Exception as _db_err:
                             print(f"[db] AVISO: Erro ao salvar histórico: {_db_err}")
+                            st.session_state["_db_save_count"] = 0
                     else:
                         print(f"[db] AVISO: numero_pedido ou cpf vazio — histórico não salvo")
+                        st.session_state["_db_save_count"] = -1  # CPF vazio
 
                     st.rerun()  # Reexecuta a página para mostrar resultado
 
@@ -2271,6 +2275,20 @@ if st.session_state.json_generated and st.session_state.generated_result:
 
     # Mostrar sucesso
     st.success("✅ JSON gerado com sucesso!")
+
+    # Feedback do salvamento no banco de dados
+    _save_count = st.session_state.get("_db_save_count")
+    if _save_count is not None:
+        _save_pedido = st.session_state.get("_db_save_pedido", "")
+        if _save_count > 0:
+            st.info(f"💾 **{_save_count} transação(ões) salva(s) no histórico** (Pedido {_save_pedido})")
+        elif _save_count == -1:
+            st.warning("⚠️ **Histórico NÃO salvo** — CPF do cliente não preenchido na Seção 2. Preencha o CPF e gere novamente para registrar.")
+        else:
+            st.warning("⚠️ **Falha ao salvar no histórico** — erro de banco de dados. Verifique os logs do Coolify.")
+        del st.session_state["_db_save_count"]
+        if "_db_save_pedido" in st.session_state:
+            del st.session_state["_db_save_pedido"]
 
     # Informações do resultado
     col1, col2, col3 = st.columns(3)
