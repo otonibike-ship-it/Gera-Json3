@@ -467,12 +467,14 @@ def page_admin_users():
                         ⚠️ **Importante**: Faça logout e login novamente com o novo usuário para usar a aplicação.
                         """)
                         st.balloons()
+                        st.session_state["_show_logout_btn"] = True
 
-                        # Oferecer botão para fazer logout e testar novo usuário
-                        st.info("👇 **Clique abaixo para fazer logout e testar o novo usuário**")
-                        if st.button("🔓 Fazer Logout para Testar Novo Usuário", use_container_width=True, type="primary"):
-                            st.session_state.clear()
-                            st.rerun()
+        # Botão exibido após o form (st.button não é permitido dentro de st.form)
+        if st.session_state.get("_show_logout_btn"):
+            st.info("👇 **Clique abaixo para fazer logout e testar o novo usuário**")
+            if st.button("🔓 Fazer Logout para Testar Novo Usuário", use_container_width=True, type="primary"):
+                st.session_state.clear()
+                st.rerun()
 
     # TAB 3: ALTERAR SENHA
     elif tab_option == "🔑 Alterar Senha":
