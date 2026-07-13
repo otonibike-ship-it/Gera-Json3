@@ -2248,6 +2248,7 @@ if transactions_data and not st.session_state.json_generated:
                         except Exception as _db_err:
                             print(f"[db] AVISO: Erro ao salvar histórico: {_db_err}")
                             st.session_state["_db_save_count"] = 0
+                            st.session_state["_db_save_error"] = str(_db_err)
                     else:
                         print(f"[db] AVISO: numero_pedido ou cpf vazio — histórico não salvo")
                         st.session_state["_db_save_count"] = -1  # CPF vazio
@@ -2287,7 +2288,10 @@ if st.session_state.json_generated and st.session_state.generated_result:
         elif _save_count == -1:
             st.warning("⚠️ **Histórico NÃO salvo** — CPF do cliente não preenchido na Seção 2. Preencha o CPF e gere novamente para registrar.")
         else:
-            st.warning("⚠️ **Falha ao salvar no histórico** — erro de banco de dados. Verifique os logs do Coolify.")
+            _db_err_msg = st.session_state.get("_db_save_error", "")
+            st.error(f"❌ **Falha ao salvar no histórico**\n\n`{_db_err_msg}`")
+            if "_db_save_error" in st.session_state:
+                del st.session_state["_db_save_error"]
         del st.session_state["_db_save_count"]
         if "_db_save_pedido" in st.session_state:
             del st.session_state["_db_save_pedido"]
