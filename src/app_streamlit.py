@@ -227,13 +227,19 @@ def sync_credentials_to_config(credentials_data: dict) -> None:
             'name': 'hybris_json_generator_auth'
         }
 
-    # Limpar usernames existentes
+    # Só sobrescrever usernames se o PostgreSQL retornou usuários de fato
+    # Manter o config.yaml anterior se vier vazio (evita invalidar cookies válidos)
+    incoming_users = credentials_data.get('users', {})
+    if not incoming_users:
+        print("  [sync] AVISO: nenhum usuario recebido do PostgreSQL — config.yaml mantido sem alteracao")
+        return
+
     config['credentials']['usernames'] = {}
 
     # Converter credenciais de JSON para formato do config.yaml
-    print(f"  [sync] Sincronizando {len(credentials_data.get('users', {}))} usuarios...")
+    print(f"  [sync] Sincronizando {len(incoming_users)} usuarios...")
 
-    for username, user_info in credentials_data.get('users', {}).items():
+    for username, user_info in incoming_users.items():
         # Extrair senha em texto plano
         password_plain = user_info.get('password', '').strip()
 
@@ -1020,30 +1026,30 @@ elif st.session_state.get("authentication_status") == False:
     st.stop()
 
 elif auth_error:
-    # ❌ Erro ao exibir widget de login
-    st.error(f"❌ Erro ao exibir widget de login")
-    st.divider()
-    st.subheader("⚠️ Erro de Autenticação")
-    st.warning(f"**Erro**: {auth_error}")
-
-    st.info("""
-    ### 💡 Soluções:
-    1. **Fazer Logout** - Limpa a sessão completamente
-    2. **Tentar Novamente** - Tenta recarregar o formulário
-    3. **Recarregar Página** - Atualizar F5 no navegador
-    """)
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
+    if "not authorized" in auth_error.lower():
+        # Cookie JWT inválido — apagar o cookie via authenticator e recarregar automaticamente
+        # (st.session_state.clear() sozinho não apaga o cookie do browser)
+        try:
+            authenticator.logout()
+        except Exception:
+            pass
+        st.session_state.clear()
+        st.rerun()
+    else:
+        # Outro erro de autenticação — mostrar para diagnóstico
+        st.error(f"❌ Erro ao exibir widget de login")
+        st.divider()
+        st.subheader("⚠️ Erro de Autenticação")
+        st.warning(f"**Erro**: {auth_error}")
+        st.info("Clique em **Fazer Logout** para limpar a sessão e tentar novamente.")
         if st.button("🔓 Fazer Logout", use_container_width=True, type="primary", key="logout_btn"):
-            st.session_state.should_logout = True
-    with col2:
-        if st.button("🔄 Tentar Novamente", use_container_width=True, key="retry2_btn"):
-            st.session_state.should_logout = True
-    with col3:
-        if st.button("🔃 Recarregar", use_container_width=True, key="refresh_btn"):
+            try:
+                authenticator.logout()
+            except Exception:
+                pass
+            st.session_state.clear()
             st.rerun()
-    st.stop()
+        st.stop()
 
 else:
     # ⏳ Não tentou fazer login ainda
