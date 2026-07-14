@@ -167,20 +167,9 @@ def load_credentials() -> dict:
                 print(f"[load_credentials] AVISO: Erro ao ler credentials.json: {e}")
                 pass
 
-    # ÚLTIMO RECURSO: Retornar usuário padrão
-    print("[load_credentials] AVISO: Usando credenciais padrao (marco apenas)")
-    return {
-        "users": {
-            "marco": {
-                "password_hash": "sha256:8f68a0d4e226a2624a9c98778bf8d6b88919dc8a4d3b214316534272fd0490c8",
-                "created_at": "2025-11-26",
-                "last_login": None,
-                "enabled": True,
-                "password": "SenhaForte123!Marcos"
-            }
-        },
-        "version": "1.0"
-    }
+    # Nenhuma fonte disponível — retornar vazio (o sync não será feito, config.yaml é preservado)
+    print("[load_credentials] AVISO: Nenhuma fonte disponivel. config.yaml sera preservado sem alteracoes.")
+    return {"users": {}, "version": "1.0"}
 
 def sync_credentials_to_config(credentials_data: dict) -> None:
     """Sincroniza credenciais do credentials.json para config.yaml para o streamlit-authenticator"""
@@ -941,9 +930,9 @@ def extract_transaction_from_hybris(data: dict) -> dict:
 try:
     _db_init = PostgresManager()
     _db_init.ensure_pedidos_table_exists()
-    print("[startup] OK: Tabela pedidos_gerados verificada")
+    print("[startup] OK: Tabela hybris_pedidos verificada")
 except Exception as _e:
-    print(f"[startup] AVISO: Nao foi possivel verificar tabela pedidos_gerados: {_e}")
+    print(f"[startup] AVISO: Nao foi possivel verificar tabela hybris_pedidos: {_e}")
 sys.stdout.flush()
 
 # ✨ PASSO 1: Carregar credenciais DO POSTGRESQL (fonte de verdade)

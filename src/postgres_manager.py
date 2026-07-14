@@ -40,7 +40,7 @@ class PostgresManager:
             return None
 
     def ensure_table_exists(self):
-        """Cria tabela usuarios se não existir e adiciona coluna display_name se necessário"""
+        """Cria tabela hybris_usuarios se não existir, migra dados da tabela antiga se necessário"""
         try:
             conn = self.get_connection()
             if not conn:
@@ -49,7 +49,7 @@ class PostgresManager:
             with conn.cursor() as cur:
                 # Criar tabela se não existir
                 cur.execute("""
-                    CREATE TABLE IF NOT EXISTS usuarios (
+                    CREATE TABLE IF NOT EXISTS hybris_usuarios (
                         id SERIAL PRIMARY KEY,
                         username VARCHAR(100) UNIQUE NOT NULL,
                         email VARCHAR(255) NOT NULL,
@@ -63,8 +63,8 @@ class PostgresManager:
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
 
-                    CREATE INDEX IF NOT EXISTS idx_usuarios_username ON usuarios(username);
-                    CREATE INDEX IF NOT EXISTS idx_usuarios_email ON usuarios(email);
+                    CREATE INDEX IF NOT EXISTS idx_hybris_usuarios_username ON hybris_usuarios(username);
+                    CREATE INDEX IF NOT EXISTS idx_hybris_usuarios_email ON hybris_usuarios(email);
                 """)
 
                 # Adicionar coluna display_name se não existir (migration)
@@ -73,10 +73,32 @@ class PostgresManager:
                     BEGIN
                         IF NOT EXISTS (
                             SELECT 1 FROM information_schema.columns
-                            WHERE table_name='usuarios' AND column_name='display_name'
+                            WHERE table_name='hybris_usuarios' AND column_name='display_name'
                         ) THEN
-                            ALTER TABLE usuarios ADD COLUMN display_name VARCHAR(100);
-                            COMMENT ON COLUMN usuarios.display_name IS 'Nome de exibição para merchantName (ex: Kennedy, Alisson)';
+                            ALTER TABLE hybris_usuarios ADD COLUMN display_name VARCHAR(100);
+                            COMMENT ON COLUMN hybris_usuarios.display_name IS 'Nome de exibição para merchantName (ex: Kennedy, Alisson)';
+                        END IF;
+                    END $$;
+                """)
+
+                # Migração automática: copiar dados da tabela antiga 'usuarios' se existir
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.tables
+                            WHERE table_name = 'usuarios'
+                        ) AND NOT EXISTS (
+                            SELECT 1 FROM hybris_usuarios LIMIT 1
+                        ) THEN
+                            INSERT INTO hybris_usuarios
+                                (username, email, name, password_hash, password,
+                                 created_at, last_login, last_modified, enabled, updated_at)
+                            SELECT username, email, name, password_hash, password,
+                                   created_at, last_login, last_modified, enabled, updated_at
+                            FROM usuarios
+                            ON CONFLICT (username) DO NOTHING;
+                            RAISE NOTICE 'Migração: dados copiados de usuarios para hybris_usuarios';
                         END IF;
                     END $$;
                 """)
@@ -101,7 +123,7 @@ class PostgresManager:
                 cur.execute("""
                     SELECT username, password_hash, password, email, name,
                            enabled, created_at, last_login, last_modified, display_name
-                    FROM usuarios
+                    FROM hybris_usuarios
                     ORDER BY created_at
                 """)
                 users = {}
@@ -142,7 +164,7 @@ class PostgresManager:
 
             with conn.cursor() as cur:
                 sql_upsert = """
-                INSERT INTO usuarios (username, email, name, password_hash, password, enabled, display_name)
+                INSERT INTO hybris_usuarios (username, email, name, password_hash, password, enabled, display_name)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (username) DO UPDATE SET
                     email = EXCLUDED.email,
@@ -171,7 +193,7 @@ class PostgresManager:
                 return False
 
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM usuarios WHERE username = %s", (username,))
+                cur.execute("DELETE FROM hybris_usuarios WHERE username = %s", (username,))
             conn.commit()
             conn.close()
             return True
@@ -190,7 +212,7 @@ class PostgresManager:
 
             with conn.cursor() as cur:
                 cur.execute("""
-                    UPDATE usuarios
+                    UPDATE hybris_usuarios
                     SET last_login = CURRENT_TIMESTAMP,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE username = %s
@@ -210,7 +232,7 @@ class PostgresManager:
                 return False
 
             with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM usuarios WHERE username = %s", (username,))
+                cur.execute("SELECT COUNT(*) FROM hybris_usuarios WHERE username = %s", (username,))
                 result = cur.fetchone()
             conn.close()
             return result[0] > 0 if result else False
@@ -225,7 +247,7 @@ class PostgresManager:
                 return 0
 
             with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM usuarios")
+                cur.execute("SELECT COUNT(*) FROM hybris_usuarios")
                 result = cur.fetchone()
             conn.close()
             return result[0] if result else 0
@@ -246,7 +268,7 @@ class PostgresManager:
 
             with conn.cursor() as cur:
                 cur.execute("""
-                    UPDATE usuarios
+                    UPDATE hybris_usuarios
                     SET display_name = %s,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE username = %s
@@ -263,14 +285,14 @@ class PostgresManager:
     # ═══════════════════════════════════════════════════════════════════════
 
     def ensure_pedidos_table_exists(self) -> bool:
-        """Cria tabela pedidos_gerados para armazenar histórico de JSONs gerados"""
+        """Cria tabela hybris_pedidos para armazenar histórico de JSONs gerados"""
         try:
             conn = self.get_connection()
             if not conn:
                 return False
             with conn.cursor() as cur:
                 cur.execute("""
-                    CREATE TABLE IF NOT EXISTS pedidos_gerados (
+                    CREATE TABLE IF NOT EXISTS hybris_pedidos (
                         id SERIAL PRIMARY KEY,
                         numero_pedido VARCHAR(20) NOT NULL,
                         nome_cliente VARCHAR(255),
@@ -282,15 +304,36 @@ class PostgresManager:
                         generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         generated_by VARCHAR(100)
                     );
-                    CREATE INDEX IF NOT EXISTS idx_pedidos_numero ON pedidos_gerados(numero_pedido);
-                    CREATE INDEX IF NOT EXISTS idx_pedidos_cpf ON pedidos_gerados(cpf_cliente);
-                    CREATE INDEX IF NOT EXISTS idx_pedidos_generated_at ON pedidos_gerados(generated_at);
+                    CREATE INDEX IF NOT EXISTS idx_pedidos_numero ON hybris_pedidos(numero_pedido);
+                    CREATE INDEX IF NOT EXISTS idx_pedidos_cpf ON hybris_pedidos(cpf_cliente);
+                    CREATE INDEX IF NOT EXISTS idx_pedidos_generated_at ON hybris_pedidos(generated_at);
+                """)
+
+                # Migração automática: copiar dados da tabela antiga 'pedidos_gerados' se existir
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.tables
+                            WHERE table_name = 'pedidos_gerados'
+                        ) AND NOT EXISTS (
+                            SELECT 1 FROM hybris_pedidos LIMIT 1
+                        ) THEN
+                            INSERT INTO hybris_pedidos
+                                (numero_pedido, nome_cliente, cpf_cliente, transaction_id,
+                                 amount, terminal_number, authorization_code, generated_at, generated_by)
+                            SELECT numero_pedido, nome_cliente, cpf_cliente, transaction_id,
+                                   amount, terminal_number, authorization_code, generated_at, generated_by
+                            FROM pedidos_gerados;
+                            RAISE NOTICE 'Migração: dados copiados de pedidos_gerados para hybris_pedidos';
+                        END IF;
+                    END $$;
                 """)
             conn.commit()
             conn.close()
             return True
         except psycopg2.Error as e:
-            print(f"❌ Erro ao criar tabela pedidos_gerados: {e}")
+            print(f"❌ Erro ao criar tabela hybris_pedidos: {e}")
             return False
 
     def save_pedido_transacao(
@@ -311,7 +354,7 @@ class PostgresManager:
                 return False
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO pedidos_gerados
+                    INSERT INTO hybris_pedidos
                         (numero_pedido, nome_cliente, cpf_cliente, transaction_id,
                          amount, terminal_number, authorization_code, generated_by)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -355,7 +398,7 @@ class PostgresManager:
                     SELECT numero_pedido, nome_cliente, cpf_cliente,
                            transaction_id, amount, terminal_number,
                            authorization_code, generated_at, generated_by
-                    FROM pedidos_gerados
+                    FROM hybris_pedidos
                     {where}
                     ORDER BY generated_at DESC
                     LIMIT 500
