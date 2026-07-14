@@ -2234,6 +2234,7 @@ if transactions_data and not st.session_state.json_generated:
                     if _num_pedido and _cpf_cli:
                         try:
                             _db = PostgresManager()
+                            _db.ensure_pedidos_table_exists()  # garante que a tabela existe
                             _saved = 0
                             for _trans in result_obj.get("transactions", []):
                                 _ok = _db.save_pedido_transacao(

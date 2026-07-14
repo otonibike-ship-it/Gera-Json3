@@ -325,7 +325,7 @@ class PostgresManager:
             return True
         except psycopg2.Error as e:
             print(f"❌ Erro ao salvar transação no histórico: {e}")
-            return False
+            raise  # propaga para o caller ver a mensagem real
 
     def get_pedidos(
         self,
