@@ -102,6 +102,29 @@ class PostgresManager:
                         END IF;
                     END $$;
                 """)
+
+                # Seed do usuário admin inicial via variáveis de ambiente
+                # Usado apenas quando hybris_usuarios está completamente vazia
+                admin_user = os.getenv('ADMIN_USER', '').strip()
+                admin_pass = os.getenv('ADMIN_PASSWORD', '').strip()
+                if admin_user and admin_pass:
+                    cur.execute("SELECT COUNT(*) FROM hybris_usuarios")
+                    count = cur.fetchone()[0]
+                    if count == 0:
+                        cur.execute("""
+                            INSERT INTO hybris_usuarios
+                                (username, email, name, password_hash, password, enabled)
+                            VALUES (%s, %s, %s, %s, %s, TRUE)
+                            ON CONFLICT (username) DO NOTHING
+                        """, (
+                            admin_user,
+                            f'{admin_user}@sensebike.com.br',
+                            admin_user.replace('.', ' ').title(),
+                            '',
+                            admin_pass
+                        ))
+                        print(f"[seed] Usuário admin '{admin_user}' criado a partir de ADMIN_USER/ADMIN_PASSWORD")
+
             conn.commit()
             conn.close()
             return True

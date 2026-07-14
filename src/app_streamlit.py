@@ -216,33 +216,29 @@ def sync_credentials_to_config(credentials_data: dict) -> None:
             'name': 'hybris_json_generator_auth'
         }
 
-    # Só sobrescrever usernames se o PostgreSQL retornou usuários de fato
-    # Manter o config.yaml anterior se vier vazio (evita invalidar cookies válidos)
     incoming_users = credentials_data.get('users', {})
-    if not incoming_users:
-        print("  [sync] AVISO: nenhum usuario recebido do PostgreSQL — config.yaml mantido sem alteracao")
-        return
 
-    config['credentials']['usernames'] = {}
+    if incoming_users:
+        # PostgreSQL retornou usuários — atualizar config.yaml com dados frescos
+        config['credentials']['usernames'] = {}
+        print(f"  [sync] Sincronizando {len(incoming_users)} usuarios...")
+    else:
+        # PostgreSQL vazio ou indisponível — preservar usernames existentes no config.yaml
+        # MAS garantir que o arquivo existe (não fazer return antecipado)
+        print("  [sync] AVISO: nenhum usuario recebido — preservando usernames existentes e garantindo config.yaml")
 
-    # Converter credenciais de JSON para formato do config.yaml
-    print(f"  [sync] Sincronizando {len(incoming_users)} usuarios...")
-
-    for username, user_info in incoming_users.items():
-        # Extrair senha em texto plano
-        password_plain = user_info.get('password', '').strip()
-
-        # Se password estiver vazio, usar um placeholder baseado no username
-        if not password_plain:
-            password_plain = f'{username}@123456'
-            print(f"  [sync] AVISO: Senha vazia para {username}, usando placeholder")
-
-        config['credentials']['usernames'][username] = {
-            'email': user_info.get('email', f'{username}@example.com'),
-            'name': user_info.get('name', username.title()),
-            'password': password_plain
-        }
-        print(f"  [sync] OK: {username}")
+    if incoming_users:
+        for username, user_info in incoming_users.items():
+            password_plain = user_info.get('password', '').strip()
+            if not password_plain:
+                password_plain = f'{username}@123456'
+                print(f"  [sync] AVISO: Senha vazia para {username}, usando placeholder")
+            config['credentials']['usernames'][username] = {
+                'email': user_info.get('email', f'{username}@example.com'),
+                'name': user_info.get('name', username.title()),
+                'password': password_plain
+            }
+            print(f"  [sync] OK: {username}")
 
     # Salvar config.yaml atualizado
     try:
