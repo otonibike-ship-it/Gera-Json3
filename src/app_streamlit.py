@@ -16,6 +16,7 @@ import sys                          # Sistema (para flush de stdout)
 import hashlib                      # Hash para detectar mudanças
 from pathlib import Path            # Trabalhar com caminhos de arquivos
 import yaml                          # Para carregar config.yaml
+import bcrypt                        # Hash bcrypt exigido pelo streamlit-authenticator>=0.2
 import streamlit_authenticator as stauth  # Biblioteca de autenticação
 from datetime import datetime       # Para timestamps
 import requests                     # Para enviar JSON via HTTP POST
@@ -233,12 +234,18 @@ def sync_credentials_to_config(credentials_data: dict) -> None:
             if not password_plain:
                 password_plain = f'{username}@123456'
                 print(f"  [sync] AVISO: Senha vazia para {username}, usando placeholder")
+
+            # streamlit-authenticator>=0.2 exige bcrypt — texto plano causa falha no checkpw
+            password_bcrypt = bcrypt.hashpw(
+                password_plain.encode('utf-8'), bcrypt.gensalt()
+            ).decode('utf-8')
+
             config['credentials']['usernames'][username] = {
                 'email': user_info.get('email', f'{username}@example.com'),
                 'name': user_info.get('name', username.title()),
-                'password': password_plain
+                'password': password_bcrypt
             }
-            print(f"  [sync] OK: {username}")
+            print(f"  [sync] OK: {username} (senha com hash bcrypt)")
 
     # Salvar config.yaml atualizado
     try:
