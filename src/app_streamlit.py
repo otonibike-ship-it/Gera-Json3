@@ -1250,17 +1250,9 @@ with st.sidebar:
 
     st.markdown("---")
 
-    if menu_option == "👥 Gerenciar Usuários":
-        page_admin_users()
-        st.stop()
-
-    if menu_option == "📊 Histórico":
-        page_historico()
-        st.stop()
-
-    # Caso contrário, continuar com Gerador JSON
-    st.header("📋 Instruções")
-    st.markdown("""
+    if menu_option == "🚀 Gerador JSON":
+        st.header("📋 Instruções")
+        st.markdown("""
     ### Como usar:
 
     1. **Cole o JSON do cabeçalho** obtido no Hybris
@@ -1285,7 +1277,15 @@ with st.sidebar:
     - Timestamps usam timezone do Brasil
     """)
 
-    st.info("**Versão:** 2.0\n\n**Status:** Operacional ✅")
+        st.info("**Versão:** 2.0\n\n**Status:** Operacional ✅")
+
+if menu_option == "👥 Gerenciar Usuários":
+    page_admin_users()
+    st.stop()
+
+if menu_option == "📊 Histórico":
+    page_historico()
+    st.stop()
 
 # Área principal do formulário
 st.markdown("---")
@@ -1332,6 +1332,42 @@ OU (com vírgula no final também funciona):
     help="Cole até antes de 'transactions'. Pode ter vírgula no final - o sistema corrige.",
     key="header_json_input"
 )
+
+# Inicializar session_state para controlar regeneração
+if 'json_generated' not in st.session_state:
+    st.session_state.json_generated = False
+if 'generated_result' not in st.session_state:
+    st.session_state.generated_result = None
+if 'generated_result_obj' not in st.session_state:
+    st.session_state.generated_result_obj = None
+if 'last_header_json_hash' not in st.session_state:
+    st.session_state.last_header_json_hash = None
+
+# Detectar mudanças no header JSON para resetar json_generated e auto-preencher dados do cliente
+# IMPORTANTE: isto precisa rodar ANTES dos widgets numero_pedido_input/nome_cliente_input
+# serem instanciados (SEÇÃO 2 abaixo) — Streamlit não permite escrever em st.session_state
+# de uma key cujo widget já foi instanciado neste run.
+current_header_hash = hashlib.md5(header_json_str.encode()).hexdigest()
+if st.session_state.last_header_json_hash != current_header_hash:
+    st.session_state.json_generated = False
+    st.session_state.generated_result = None
+    st.session_state.generated_result_obj = None
+    st.session_state.last_header_json_hash = current_header_hash
+    # Auto-preencher número do pedido e nome do cliente a partir do novo cabeçalho
+    if header_json_str.strip():
+        try:
+            _cleaned_hdr = try_fix_incomplete_json(header_json_str.strip())
+            _tmp_hdr = json.loads(_cleaned_hdr)
+            st.session_state.numero_pedido_input = str(_tmp_hdr.get("number", ""))
+            _items_tmp = _tmp_hdr.get("items", [])
+            if _items_tmp:
+                st.session_state.nome_cliente_input = _items_tmp[0].get("name", "")
+        except Exception:
+            pass
+    else:
+        st.session_state.numero_pedido_input = ""
+        st.session_state.nome_cliente_input = ""
+    st.rerun()
 
 st.markdown("---")
 
@@ -1415,39 +1451,6 @@ transactions_data = []
 result_json = None
 error_message = None
 prefill_data = None  # Inicializar prefill_data (removida seção 2.1)
-
-# Inicializar session_state para controlar regeneração
-if 'json_generated' not in st.session_state:
-    st.session_state.json_generated = False
-if 'generated_result' not in st.session_state:
-    st.session_state.generated_result = None
-if 'generated_result_obj' not in st.session_state:
-    st.session_state.generated_result_obj = None
-if 'last_header_json_hash' not in st.session_state:
-    st.session_state.last_header_json_hash = None
-
-# Detectar mudanças no header JSON para resetar json_generated e auto-preencher dados do cliente
-current_header_hash = hashlib.md5(header_json_str.encode()).hexdigest()
-if st.session_state.last_header_json_hash != current_header_hash:
-    st.session_state.json_generated = False
-    st.session_state.generated_result = None
-    st.session_state.generated_result_obj = None
-    st.session_state.last_header_json_hash = current_header_hash
-    # Auto-preencher número do pedido e nome do cliente a partir do novo cabeçalho
-    if header_json_str.strip():
-        try:
-            _cleaned_hdr = try_fix_incomplete_json(header_json_str.strip())
-            _tmp_hdr = json.loads(_cleaned_hdr)
-            st.session_state.numero_pedido_input = str(_tmp_hdr.get("number", ""))
-            _items_tmp = _tmp_hdr.get("items", [])
-            if _items_tmp:
-                st.session_state.nome_cliente_input = _items_tmp[0].get("name", "")
-        except Exception:
-            pass
-    else:
-        st.session_state.numero_pedido_input = ""
-        st.session_state.nome_cliente_input = ""
-    st.rerun()
 
 # SEÇÃO 5: CAMPOS ESPECÍFICOS POR TIPO
 if transaction_type:
