@@ -925,48 +925,64 @@ def extract_transaction_from_hybris(data: dict) -> dict:
     return data
 
 # ═══════════════════════════════════════════════════════════════════════
-# STARTUP - Executa ao inicializar a aplicação
+# STARTUP - Executa apenas uma vez por sessão (não a cada interação)
 # ═══════════════════════════════════════════════════════════════════════
 # AGORA todos as funções já estão definidas, seguro chamar!
+#
+# IMPORTANTE: o Streamlit reexecuta o script inteiro a cada interação do
+# usuário (ex: sair de um campo de texto). Sem essa trava em session_state,
+# os PASSOs 0-3 abaixo (round-trips no Postgres + reescrita do config.yaml +
+# reconstrução do authenticator) rodavam em TODA interação da página inteira,
+# mesmo já logado e no meio do preenchimento do formulário — daí a sensação
+# de "ficar processando" ao clicar fora de qualquer campo.
+# Agora só roda de fato no primeiro carregamento da sessão (login novo ou F5).
+if "credentials" not in st.session_state or "authenticator" not in st.session_state:
+    # ✨ PASSO 0: Garantir que tabela de histórico existe
+    try:
+        _db_init = PostgresManager()
+        _db_init.ensure_pedidos_table_exists()
+        print("[startup] OK: Tabela hybris_pedidos verificada")
+    except Exception as _e:
+        print(f"[startup] AVISO: Nao foi possivel verificar tabela hybris_pedidos: {_e}")
+    sys.stdout.flush()
 
-# ✨ PASSO 0: Garantir que tabela de histórico existe
-try:
-    _db_init = PostgresManager()
-    _db_init.ensure_pedidos_table_exists()
-    print("[startup] OK: Tabela hybris_pedidos verificada")
-except Exception as _e:
-    print(f"[startup] AVISO: Nao foi possivel verificar tabela hybris_pedidos: {_e}")
-sys.stdout.flush()
+    # ✨ PASSO 1: Carregar credenciais DO POSTGRESQL (fonte de verdade)
+    print("[startup] PASSO 1: Carregando credenciais")
+    sys.stdout.flush()
+    credentials = load_credentials()
+    usuarios_carregados = list(credentials.get('users', {}).keys())
+    print(f"[startup] Usuarios carregados: {usuarios_carregados}")
+    sys.stdout.flush()
 
-# ✨ PASSO 1: Carregar credenciais DO POSTGRESQL (fonte de verdade)
-print("[startup] PASSO 1: Carregando credenciais")
-sys.stdout.flush()
-credentials = load_credentials()
-usuarios_carregados = list(credentials.get('users', {}).keys())
-print(f"[startup] Usuarios carregados: {usuarios_carregados}")
-sys.stdout.flush()
-
-# ✨ PASSO 2: Sincronizar credenciais para config.yaml (para streamlit-authenticator)
-# Isso CONVERTE de credentials.json (PostgreSQL) para o formato do config.yaml
-print("\n[startup] PASSO 2: Sincronizando para config.yaml")
-sys.stdout.flush()
-sync_status = False
-try:
-    sync_credentials_to_config(credentials)
-    sync_status = True
-    print("[startup] OK: Sincronizacao concluida com sucesso")
-except Exception as e:
-    print(f"[startup] ERRO critico ao sincronizar: {e}")
-    import traceback
-    traceback.print_exc()
+    # ✨ PASSO 2: Sincronizar credenciais para config.yaml (para streamlit-authenticator)
+    # Isso CONVERTE de credentials.json (PostgreSQL) para o formato do config.yaml
+    print("\n[startup] PASSO 2: Sincronizando para config.yaml")
+    sys.stdout.flush()
     sync_status = False
-sys.stdout.flush()
+    try:
+        sync_credentials_to_config(credentials)
+        sync_status = True
+        print("[startup] OK: Sincronizacao concluida com sucesso")
+    except Exception as e:
+        print(f"[startup] ERRO critico ao sincronizar: {e}")
+        import traceback
+        traceback.print_exc()
+        sync_status = False
+    sys.stdout.flush()
 
-# ✨ PASSO 3: AGORA inicializar o authenticator (com dados já sincronizados)
-print(f"\n[startup] PASSO 3: Inicializando authenticator (sync_status={sync_status})")
-sys.stdout.flush()
-authenticator = load_authenticator()
-sys.stdout.flush()
+    # ✨ PASSO 3: AGORA inicializar o authenticator (com dados já sincronizados)
+    print(f"\n[startup] PASSO 3: Inicializando authenticator (sync_status={sync_status})")
+    sys.stdout.flush()
+    authenticator = load_authenticator()
+    sys.stdout.flush()
+
+    # Guardar em session_state para não repetir PASSO 0-3 nas próximas reexecuções
+    st.session_state.credentials = credentials
+    st.session_state.authenticator = authenticator
+else:
+    # Sessão já inicializada — reaproveitar o que já foi carregado/sincronizado
+    credentials = st.session_state.credentials
+    authenticator = st.session_state.authenticator
 
 # ✨ Inicializar flag de logout se não existir
 if "should_logout" not in st.session_state:
@@ -991,14 +1007,16 @@ if st.session_state.get("authentication_status") == True:
     # ✅ Usuário logado com sucesso
     authenticator.logout(location="sidebar")
 
-    # ✨ Atualizar last_login no PostgreSQL
-    try:
-        username = st.session_state.get("username", "")
-        if username:
-            db = PostgresManager()
-            db.update_last_login(username)
-    except Exception:
-        pass  # Falha silenciosa para não bloquear o acesso
+    # ✨ Atualizar last_login no PostgreSQL (apenas uma vez por sessão, não a cada interação)
+    if not st.session_state.get("_last_login_updated"):
+        try:
+            username = st.session_state.get("username", "")
+            if username:
+                db = PostgresManager()
+                db.update_last_login(username)
+        except Exception:
+            pass  # Falha silenciosa para não bloquear o acesso
+        st.session_state._last_login_updated = True
 
     # Continuar com o aplicativo (resto do código)
 
@@ -1576,6 +1594,7 @@ if transaction_type:
 
             # Botão para gerar
             if st.button("🚀 Gerar JSON", type="primary"):
+                st.session_state.json_generated = False  # permite regerar mesmo apos sucesso anterior
                 # Formulário manual - validar campos
                 if not pix_number or not pix_merchant_name:
                     st.error("⚠️ Por favor, preencha todos os campos obrigatórios!")
@@ -1586,6 +1605,7 @@ if transaction_type:
         if pix_has_existing == "Sim":
             # Botão para gerar (quando JSON colado)
             if st.button("🚀 Gerar JSON", type="primary", key="pix_gerar_json"):
+                st.session_state.json_generated = False  # permite regerar mesmo apos sucesso anterior
                 # JSON colado - validar apenas número
                 if not transactions_data or not transactions_data[0].get("number"):
                     st.error("⚠️ JSON colado precisa ter 'number'!")
@@ -1717,6 +1737,7 @@ if transaction_type:
 
             # Botão para gerar
             if st.button("🚀 Gerar JSON", type="primary"):
+                st.session_state.json_generated = False  # permite regerar mesmo apos sucesso anterior
                 # Formulário manual - validar campos
                 if not all([deb_number, deb_merchant_name, deb_auth_code]):
                     st.error("⚠️ Por favor, preencha todos os campos obrigatórios!")
@@ -1727,6 +1748,7 @@ if transaction_type:
         if deb_has_existing == "Sim":
             # Botão para gerar (quando JSON colado)
             if st.button("🚀 Gerar JSON", type="primary", key="deb_gerar_json"):
+                st.session_state.json_generated = False  # permite regerar mesmo apos sucesso anterior
                 # JSON colado - validar apenas número
                 if not transactions_data or not transactions_data[0].get("number"):
                     st.error("⚠️ JSON colado precisa ter 'number'!")
@@ -1885,6 +1907,7 @@ if transaction_type:
 
             # Botão para gerar
             if st.button("🚀 Gerar JSON", type="primary"):
+                st.session_state.json_generated = False  # permite regerar mesmo apos sucesso anterior
                 # Formulário manual - validar campos
                 if not all([cred_number, cred_merchant_name, cred_auth_code]) or cred_quotas == 0:
                     st.error("⚠️ Por favor, preencha todos os campos obrigatórios (incluindo numberOfQuotas)!")
@@ -1895,6 +1918,7 @@ if transaction_type:
         if cred_has_existing == "Sim":
             # Botão para gerar (quando JSON colado)
             if st.button("🚀 Gerar JSON", type="primary", key="cred_gerar_json"):
+                st.session_state.json_generated = False  # permite regerar mesmo apos sucesso anterior
                 # JSON colado - validar apenas número
                 if not transactions_data or not transactions_data[0].get("number"):
                     st.error("⚠️ JSON colado precisa ter 'number'!")
@@ -2136,6 +2160,7 @@ if transaction_type:
 
         # Botão para gerar
         if st.button("🚀 Gerar JSON", type="primary"):
+            st.session_state.json_generated = False  # permite regerar mesmo apos sucesso anterior
             # Filtrar transações válidas (remover None)
             valid_transactions = [t for t in temp_transactions if t is not None]
 
