@@ -413,13 +413,17 @@ class HybrisJSONGenerator:
     def validate_transaction_totals(self, complete_order: Dict) -> Dict:
         """
         Valida se a soma das transações bate com o valor total do cabeçalho.
-        Se houver diferença, ajusta automaticamente o price do cabeçalho
-        para bater com a soma real das transações (evita rejeição pela API).
 
-        Retorna dict com informações do ajuste:
+        O campo "price" do cabeçalho é o valor total do pedido conforme o
+        Hybris e NUNCA deve ser alterado por este gerador — ele é a fonte da
+        verdade. Se a soma das transações divergir dele, isso indica um erro
+        nos dados das transações (valor/parcelas errados) que precisa ser
+        corrigido pelo usuário, não "corrigido" reescrevendo o total do pedido.
+
+        Retorna dict com o resultado da comparação:
         {
-            "adjusted": bool,
-            "original_price": int,
+            "matches": bool,
+            "header_price": int,
             "transactions_total": int,
             "difference": int
         }
@@ -428,22 +432,12 @@ class HybrisJSONGenerator:
         transactions_total = sum(t["amount"] for t in complete_order["transactions"])
         difference = abs(header_price - transactions_total)
 
-        result = {
-            "adjusted": False,
-            "original_price": header_price,
+        return {
+            "matches": header_price == transactions_total,
+            "header_price": header_price,
             "transactions_total": transactions_total,
             "difference": difference
         }
-
-        if header_price != transactions_total:
-            print(f"[auto-fix] Price ajustado: {header_price} → {transactions_total} (diferença: {difference} centavos)")
-            complete_order["price"] = transactions_total
-            # Ajustar também unit_price do item para manter consistência
-            if complete_order.get("items") and len(complete_order["items"]) > 0:
-                complete_order["items"][0]["unit_price"] = transactions_total
-            result["adjusted"] = True
-
-        return result
 
     def generate_json_with_header(
         self,
@@ -590,8 +584,24 @@ class HybrisJSONGenerator:
 
                 complete_order["transactions"].append(trans)
 
-        # Validar e ajustar totais automaticamente
-        adjustment = self.validate_transaction_totals(complete_order)
+        # Validar totais: price do cabeçalho (Hybris) é a fonte da verdade e
+        # NUNCA é alterado — se a soma das transações divergir, bloquear a
+        # geração em vez de reescrever o total do pedido.
+        totals = self.validate_transaction_totals(complete_order)
+        if not totals["matches"]:
+            header_reais = totals["header_price"] / 100
+            transactions_reais = totals["transactions_total"] / 100
+            difference_reais = totals["difference"] / 100
+            return {
+                "success": False,
+                "error": "Valores divergentes",
+                "validation_errors": [
+                    f"Total do Pedido (price, cabeçalho): R$ {header_reais:,.2f}",
+                    f"Soma das Transações: R$ {transactions_reais:,.2f}",
+                    f"Diferença: R$ {difference_reais:,.2f}",
+                    "Corrija o(s) valor(es) das transações para que a soma bata exatamente com o 'price' do cabeçalho."
+                ]
+            }
 
         return json.dumps(complete_order, indent=2, ensure_ascii=False)
 

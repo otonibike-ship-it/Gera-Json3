@@ -2337,8 +2337,10 @@ if st.session_state.json_generated and st.session_state.generated_result:
     # COMPARAÇÃO DE TOTAIS: Header vs Transações
     st.markdown("### 💰 Validação de Totais:")
 
-    # O price já foi ajustado automaticamente pelo generator para bater com a soma
-    final_total = result_obj["price"]  # em centavos (já ajustado)
+    # O price do cabeçalho é a fonte da verdade (Hybris) e nunca é alterado pelo
+    # generator — se divergisse da soma das transações, a geração já teria sido
+    # bloqueada com erro antes de chegar aqui (ver validate_transaction_totals).
+    final_total = result_obj["price"]  # em centavos
     transactions_total = sum(t.get("amount", 0) for t in result_obj["transactions"])
 
     final_total_reais = final_total / 100
@@ -2383,11 +2385,12 @@ if st.session_state.json_generated and st.session_state.generated_result:
         </div>
         """, unsafe_allow_html=True)
 
-    # Status — sempre vai bater pois o generator ajusta automaticamente
+    # Sempre bate neste ponto: a geração é bloqueada mais acima quando diverge.
+    # Mantido como checagem defensiva.
     if final_total == transactions_total:
         st.success("✅ **Totais conferem** — JSON pronto para envio!")
     else:
-        st.info(f"ℹ️ O valor do pedido foi ajustado automaticamente para R$ {transactions_total_reais:,.2f} para bater com a soma das transações.")
+        st.error(f"❌ **Totais divergentes** — Total do Pedido: R$ {final_total_reais:,.2f} | Soma das Transações: R$ {transactions_total_reais:,.2f}. NÃO envie este JSON.")
 
     st.markdown("---")
 
