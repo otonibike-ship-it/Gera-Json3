@@ -589,18 +589,10 @@ class HybrisJSONGenerator:
         # geração em vez de reescrever o total do pedido.
         totals = self.validate_transaction_totals(complete_order)
         if not totals["matches"]:
-            header_reais = totals["header_price"] / 100
-            transactions_reais = totals["transactions_total"] / 100
-            difference_reais = totals["difference"] / 100
             return {
                 "success": False,
                 "error": "Valores divergentes",
-                "validation_errors": [
-                    f"Total do Pedido (price, cabeçalho): R$ {header_reais:,.2f}",
-                    f"Soma das Transações: R$ {transactions_reais:,.2f}",
-                    f"Diferença: R$ {difference_reais:,.2f}",
-                    "Corrija o(s) valor(es) das transações para que a soma bata exatamente com o 'price' do cabeçalho."
-                ]
+                "totals": totals
             }
 
         return json.dumps(complete_order, indent=2, ensure_ascii=False)

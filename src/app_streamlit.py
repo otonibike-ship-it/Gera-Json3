@@ -2236,9 +2236,45 @@ if transactions_data and not st.session_state.json_generated:
 
                 # Verificar se houve erro
                 if isinstance(result, dict) and not result.get("success", True):
-                    st.error("❌ Erro na validação:")
-                    for error in result.get("validation_errors", []):
-                        st.error(f"  • {error}")
+                    if result.get("error") == "Valores divergentes":
+                        _t = result["totals"]
+                        _header_r = _t["header_price"] / 100
+                        _trans_r = _t["transactions_total"] / 100
+                        _diff_r = _t["difference"] / 100
+                        st.markdown(f"""
+                        <div style="
+                            background-color: #3a1414;
+                            border: 1px solid #7a2222;
+                            border-radius: 10px;
+                            padding: 18px 22px;
+                            margin-bottom: 10px;
+                        ">
+                            <p style="color: #ff6b6b; font-weight: bold; font-size: 16px; margin: 0 0 14px 0;">
+                                ❌ Valores divergentes — JSON não foi gerado
+                            </p>
+                            <div style="display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 14px;">
+                                <div>
+                                    <p style="color: #bbb; font-size: 12px; margin: 0;">Total do Pedido (price)</p>
+                                    <p style="color: #fff; font-size: 20px; font-weight: bold; margin: 2px 0 0 0;">R$ {_header_r:,.2f}</p>
+                                </div>
+                                <div>
+                                    <p style="color: #bbb; font-size: 12px; margin: 0;">Soma das Transações</p>
+                                    <p style="color: #fff; font-size: 20px; font-weight: bold; margin: 2px 0 0 0;">R$ {_trans_r:,.2f}</p>
+                                </div>
+                                <div>
+                                    <p style="color: #bbb; font-size: 12px; margin: 0;">Diferença</p>
+                                    <p style="color: #ff6b6b; font-size: 20px; font-weight: bold; margin: 2px 0 0 0;">R$ {_diff_r:,.2f}</p>
+                                </div>
+                            </div>
+                            <p style="color: #ddd; font-size: 13px; margin: 0;">
+                                Corrija o(s) valor(es) das transações para que a soma bata exatamente com o <code>price</code> do cabeçalho.
+                            </p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        _errors = result.get("validation_errors", [])
+                        _bullets = "\n".join(f"- {e}" for e in _errors)
+                        st.error(f"❌ **Erro na validação:**\n{_bullets}")
                 else:
                     # Armazenar resultado em session_state
                     result_obj = json.loads(result)
