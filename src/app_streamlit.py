@@ -14,6 +14,8 @@ import json                         # Biblioteca para manipular JSON
 import os                           # Funções do sistema operacional
 import sys                          # Sistema (para flush de stdout)
 import hashlib                      # Hash para detectar mudanças
+import csv                          # Leitura do CSV de pagamentos diretos
+import io                           # Wrapper de texto para o arquivo enviado
 from pathlib import Path            # Trabalhar com caminhos de arquivos
 import yaml                          # Para carregar config.yaml
 import bcrypt                        # Hash bcrypt exigido pelo streamlit-authenticator>=0.2
@@ -609,6 +611,147 @@ def page_historico():
 
     except Exception as e:
         st.error(f"❌ Erro ao carregar histórico: {str(e)}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# PAGAMENTOS DIRETOS - Import do CSV exportado do Hybris (anti-fraude)
+# ═══════════════════════════════════════════════════════════════════════
+
+# Colunas do CSV: obrigatórias pra checar duplicidade + opcionais só pra exibição
+_PAGDIR_REQUIRED_COLS = {"nsu", "cod_autorizacao"}
+_PAGDIR_OPTIONAL_COLS = {"pedido", "valor_pago", "data_pagamento", "tipo_venda", "produto"}
+
+
+def _ler_csv_pagamentos_diretos(uploaded_file):
+    """
+    Lê o CSV exportado da query do Hybris. Detecta separador automaticamente
+    (vírgula ou ponto-e-vírgula) e casa colunas por nome, ignorando maiúsculas/
+    minúsculas. Retorna (rows, missing_cols) — rows já no formato esperado por
+    PostgresManager.import_pagamentos_diretos.
+    """
+    raw = uploaded_file.getvalue()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+
+    try:
+        dialect = csv.Sniffer().sniff(text[:2000], delimiters=",;\t")
+    except csv.Error:
+        dialect = csv.excel  # separador vírgula, padrão
+
+    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    if not reader.fieldnames:
+        return [], _PAGDIR_REQUIRED_COLS
+
+    # Mapear nome_da_coluna_normalizado -> nome_original (case/espaco-insensitive)
+    col_map = {name.strip().lower(): name for name in reader.fieldnames}
+    missing = _PAGDIR_REQUIRED_COLS - set(col_map.keys())
+    if missing:
+        return [], missing
+
+    rows = []
+    for raw_row in reader:
+        row = {}
+        for col in _PAGDIR_REQUIRED_COLS | _PAGDIR_OPTIONAL_COLS:
+            original_col = col_map.get(col)
+            value = raw_row.get(original_col, "") if original_col else ""
+            row["authorization_code" if col == "cod_autorizacao" else col] = (value or "").strip()
+        rows.append(row)
+    return rows, set()
+
+
+def page_pagamentos_diretos():
+    """Página de importação do CSV de pagamentos diretos (Hybris) para checagem anti-fraude"""
+    st.subheader("📥 Pagamentos Diretos (Hybris) — Import CSV")
+    st.markdown("---")
+
+    st.info(
+        "ℹ️ Pagamentos feitos **dentro do pedido** na maquininha chegam pagos "
+        "automaticamente no Hybris e nunca passam pelo Gera JSON. Pra evitar que "
+        "alguém reaproveite o comprovante (NSU + Autenticação) de um desses "
+        "pagamentos diretos pra vincular outro pedido de má fé, importe aqui — "
+        "manualmente, com a frequência que preferir — um CSV com esses pagamentos. "
+        "A checagem de duplicidade na geração do JSON passa a consultar essa lista também."
+    )
+
+    with st.expander("📋 Query SQL para gerar o CSV no Hybris"):
+        st.code("""SELECT
+  o.p_code AS pedido,
+  o.createdTS AS data_pedido,
+  (SELECT ev.Code FROM enumerationvalues ev WHERE ev.PK = o.p_status) AS status_pedido,
+  (SELECT pm.p_code FROM paymentmodes pm WHERE pm.PK = o.p_paymentmode) AS modo_pagamento,
+  (SELECT p.p_code FROM products p WHERE p.PK = oe.p_product) AS produto,
+  oe.p_totalprice AS valor_pedido,
+  (SELECT w.p_code FROM warehouses w WHERE w.PK = oe.p_warehouse) AS warehouse,
+  CASE
+    WHEN oe.p_warehouse = 8796158592981 THEN 'Venda Direta (1101)'
+    WHEN oe.p_warehouse = 8796388427733 THEN 'Venda RA (1104)'
+    ELSE 'Consignada/Franquia'
+  END AS tipo_venda,
+  gpo.p_id AS id_pagamento,
+  pt.p_transactiondate AS data_pagamento,
+  pt.p_amount AS valor_pago,
+  pt.p_cardbrand AS bandeira,
+  pt.p_productname AS tipo_transacao,
+  pt.p_numberofquotas AS parcelas,
+  pt.p_nsu AS nsu,
+  pt.p_authorizationcode AS cod_autorizacao,
+  pt.p_maskedcreditcard AS cartao,
+  (SELECT u.p_uid FROM users u WHERE u.PK = o.p_user) AS usuario
+FROM orders o
+JOIN orderentries oe ON oe.p_order = o.PK
+LEFT JOIN glpaymentorder gpo ON gpo.p_order = o.PK
+LEFT JOIN glpaymenttransaction pt ON pt.p_order = gpo.PK
+ORDER BY o.createdTS DESC;""", language="sql")
+        st.caption(
+            "Exporte o resultado como CSV (com cabeçalho). As colunas obrigatórias "
+            "pro import são **nsu** e **cod_autorizacao** — as demais são só exibidas "
+            "quando uma duplicidade é encontrada."
+        )
+
+    # Contador atual da tabela, pra dar visibilidade do que já foi importado
+    try:
+        _db_count = PostgresManager()
+        _db_count.ensure_pagamentos_diretos_table_exists()
+        with _db_count.get_connection() as _conn:
+            with _conn.cursor() as _cur:
+                _cur.execute("SELECT COUNT(*) FROM hybris_pagamentos_diretos")
+                _total = _cur.fetchone()[0]
+        st.caption(f"📊 {_total} pagamento(s) diretos importados até agora.")
+    except Exception:
+        pass
+
+    uploaded_file = st.file_uploader("Selecione o CSV exportado do Hybris", type=["csv"])
+
+    if uploaded_file is not None:
+        rows, missing = _ler_csv_pagamentos_diretos(uploaded_file)
+
+        if missing:
+            st.error(
+                f"❌ Coluna(s) obrigatória(s) não encontrada(s) no CSV: "
+                f"{', '.join(sorted(missing))}. Confira o cabeçalho do arquivo."
+            )
+        else:
+            validas = [r for r in rows if r.get("nsu") and r.get("authorization_code")]
+            invalidas = len(rows) - len(validas)
+
+            st.success(f"✅ {len(rows)} linha(s) lida(s) do CSV — {len(validas)} com NSU+Autenticação preenchidos.")
+            if invalidas:
+                st.warning(f"⚠️ {invalidas} linha(s) sem NSU ou Autenticação serão ignoradas.")
+
+            st.markdown("**Prévia (5 primeiras linhas):**")
+            st.dataframe(rows[:5], use_container_width=True)
+
+            if st.button("📥 Confirmar Importação", type="primary"):
+                _db = PostgresManager()
+                _db.ensure_pagamentos_diretos_table_exists()
+                _username = st.session_state.get("username", "")
+                result = _db.import_pagamentos_diretos(rows, imported_by=_username)
+                st.success(
+                    f"✅ Importação concluída: {result['imported']} registro(s) "
+                    f"salvo(s)/atualizado(s), {result['skipped']} ignorado(s)."
+                )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1262,7 +1405,7 @@ with st.sidebar:
     # MENU PRINCIPAL - Escolher entre Gerador JSON ou Gerenciar Usuários
     menu_option = st.radio(
         "📋 Escolha uma opção:",
-        ["🚀 Gerador JSON", "👥 Gerenciar Usuários", "📊 Histórico"],
+        ["🚀 Gerador JSON", "👥 Gerenciar Usuários", "📊 Histórico", "📥 Pagamentos Diretos"],
         help="Selecione o que deseja fazer"
     )
 
@@ -1303,6 +1446,10 @@ if menu_option == "👥 Gerenciar Usuários":
 
 if menu_option == "📊 Histórico":
     page_historico()
+    st.stop()
+
+if menu_option == "📥 Pagamentos Diretos":
+    page_pagamentos_diretos()
     st.stop()
 
 # Área principal do formulário
@@ -2287,17 +2434,51 @@ if transactions_data and not st.session_state.json_generated:
                     try:
                         _dup_db = PostgresManager()
                         _dup_db.ensure_pedidos_table_exists()
+                        _dup_db.ensure_pagamentos_diretos_table_exists()
                         for _trans in result_obj.get("transactions", []):
                             _nsu = str(_trans.get("number", "")).strip()
                             _auth = str(_trans.get("authorization_code", "")).strip()
+
+                            # 1) Já foi usado em outro pedido gerado pelo próprio Gera JSON?
                             _hit = _dup_db.find_duplicate_transaction(_nsu, _auth)
                             if _hit:
-                                _duplicate = {**_hit, "nsu": _nsu, "authorization_code": _auth}
+                                _duplicate = {
+                                    "source": "interno",
+                                    "nsu": _nsu,
+                                    "authorization_code": _auth,
+                                    "pedido": _hit["numero_pedido"],
+                                    "detalhe": (
+                                        f"cliente {_hit['nome_cliente'] or 'sem nome'}, "
+                                        f"gerado em {_hit['generated_at']} por {_hit['generated_by'] or '—'}"
+                                    )
+                                }
+                                break
+
+                            # 2) Já é um pagamento direto (automático) importado do Hybris?
+                            _hit_ext = _dup_db.find_duplicate_in_pagamentos_diretos(_nsu, _auth)
+                            if _hit_ext:
+                                _duplicate = {
+                                    "source": "externo",
+                                    "nsu": _nsu,
+                                    "authorization_code": _auth,
+                                    "pedido": _hit_ext["pedido"],
+                                    "detalhe": (
+                                        f"pago em {_hit_ext['data_pagamento'] or '—'} · "
+                                        f"{_hit_ext['tipo_venda'] or '—'} · produto {_hit_ext['produto'] or '—'} · "
+                                        f"valor {_hit_ext['valor_pago'] or '—'} "
+                                        "(pagamento direto no Hybris, fora do Gera JSON)"
+                                    )
+                                }
                                 break
                     except Exception as _dup_err:
                         print(f"[dup-check] AVISO: falha ao verificar duplicidade NSU/Autenticação: {_dup_err}")
 
                     if _duplicate:
+                        _titulo = (
+                            "❌ NSU + Autenticação já utilizados em outro pedido — JSON não foi gerado"
+                            if _duplicate["source"] == "interno"
+                            else "❌ NSU + Autenticação já são um pagamento direto no Hybris — JSON não foi gerado"
+                        )
                         st.markdown(f"""
                         <div style="
                             background-color: #3a1414;
@@ -2307,7 +2488,7 @@ if transactions_data and not st.session_state.json_generated:
                             margin-bottom: 10px;
                         ">
                             <p style="color: #ff6b6b; font-weight: bold; font-size: 16px; margin: 0 0 14px 0;">
-                                ❌ NSU + Autenticação já utilizados — JSON não foi gerado
+                                {_titulo}
                             </p>
                             <div style="display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 14px;">
                                 <div>
@@ -2320,9 +2501,7 @@ if transactions_data and not st.session_state.json_generated:
                                 </div>
                             </div>
                             <p style="color: #ddd; font-size: 13px; margin: 0 0 6px 0;">
-                                Esse comprovante já foi usado no pedido <b>{_duplicate['numero_pedido']}</b>
-                                ({_duplicate['nome_cliente'] or 'sem nome'}), gerado em {_duplicate['generated_at']}
-                                por <b>{_duplicate['generated_by'] or '—'}</b>.
+                                Esse comprovante já foi usado no pedido <b>{_duplicate['pedido']}</b> ({_duplicate['detalhe']}).
                             </p>
                             <p style="color: #ddd; font-size: 13px; margin: 0;">
                                 Confira se este pedido não é uma duplicidade do comprovante acima antes de prosseguir.

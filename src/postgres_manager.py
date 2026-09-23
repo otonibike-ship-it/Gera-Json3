@@ -489,3 +489,129 @@ class PostgresManager:
         except psycopg2.Error as e:
             print(f"❌ Erro ao verificar duplicidade NSU/Autenticação: {e}")
             return None
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # PAGAMENTOS DIRETOS (importados do Hybris via CSV)
+    # ═══════════════════════════════════════════════════════════════════════
+    # Pagamentos feitos dentro do pedido na maquininha chegam pagos automati-
+    # camente no Hybris e nunca passam pelo Gera JSON — por isso o histórico
+    # de hybris_pedidos sozinho não é suficiente pra checar duplicidade de
+    # NSU/Autenticação: alguém poderia reaproveitar o comprovante de um
+    # pagamento direto antigo pra "vincular" outro pedido de má fé. Essa
+    # tabela guarda um snapshot importado manualmente (CSV) desses pagamentos
+    # diretos, pra cruzar na mesma checagem.
+
+    def ensure_pagamentos_diretos_table_exists(self) -> bool:
+        """Cria tabela hybris_pagamentos_diretos (snapshot importado do Hybris)"""
+        try:
+            conn = self.get_connection()
+            if not conn:
+                return False
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(self.schema)))
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS hybris_pagamentos_diretos (
+                        id SERIAL PRIMARY KEY,
+                        pedido VARCHAR(50),
+                        nsu VARCHAR(100) NOT NULL,
+                        authorization_code VARCHAR(100) NOT NULL,
+                        valor_pago VARCHAR(50),
+                        data_pagamento VARCHAR(50),
+                        tipo_venda VARCHAR(100),
+                        produto VARCHAR(100),
+                        imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        imported_by VARCHAR(100),
+                        UNIQUE (nsu, authorization_code)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_pagdiretos_nsu_auth
+                        ON hybris_pagamentos_diretos(nsu, authorization_code);
+                """)
+            conn.commit()
+            conn.close()
+            return True
+        except psycopg2.Error as e:
+            print(f"❌ Erro ao criar tabela hybris_pagamentos_diretos: {e}")
+            return False
+
+    def import_pagamentos_diretos(self, rows: list, imported_by: str) -> dict:
+        """
+        Importa (upsert por nsu+authorization_code) linhas do CSV de pagamentos
+        diretos exportado do Hybris. Cada item de `rows` é um dict com pelo
+        menos 'nsu' e 'authorization_code'; demais chaves são opcionais.
+
+        Retorna {"imported": int, "skipped": int}
+        """
+        imported = 0
+        skipped = 0
+        try:
+            conn = self.get_connection()
+            if not conn:
+                return {"imported": 0, "skipped": len(rows)}
+            with conn.cursor() as cur:
+                for row in rows:
+                    nsu = (row.get("nsu") or "").strip()
+                    auth = (row.get("authorization_code") or "").strip()
+                    if not nsu or not auth:
+                        skipped += 1
+                        continue
+                    cur.execute("""
+                        INSERT INTO hybris_pagamentos_diretos
+                            (pedido, nsu, authorization_code, valor_pago,
+                             data_pagamento, tipo_venda, produto, imported_by)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (nsu, authorization_code) DO UPDATE SET
+                            pedido = EXCLUDED.pedido,
+                            valor_pago = EXCLUDED.valor_pago,
+                            data_pagamento = EXCLUDED.data_pagamento,
+                            tipo_venda = EXCLUDED.tipo_venda,
+                            produto = EXCLUDED.produto,
+                            imported_at = CURRENT_TIMESTAMP,
+                            imported_by = EXCLUDED.imported_by
+                    """, (
+                        row.get("pedido"), nsu, auth, row.get("valor_pago"),
+                        row.get("data_pagamento"), row.get("tipo_venda"),
+                        row.get("produto"), imported_by
+                    ))
+                    imported += 1
+            conn.commit()
+            conn.close()
+            return {"imported": imported, "skipped": skipped}
+        except psycopg2.Error as e:
+            print(f"❌ Erro ao importar pagamentos diretos: {e}")
+            return {"imported": imported, "skipped": skipped + (len(rows) - imported - skipped)}
+
+    def find_duplicate_in_pagamentos_diretos(self, nsu: str, authorization_code: str):
+        """
+        Verifica se o par (NSU, Autenticação) já aparece nos pagamentos diretos
+        importados do Hybris (pagamento automático, fora do Gera JSON).
+
+        Retorna o registro que colide, ou None se não houver duplicidade.
+        """
+        if not nsu or not authorization_code:
+            return None
+        try:
+            conn = self.get_connection()
+            if not conn:
+                return None
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT pedido, valor_pago, data_pagamento, tipo_venda, produto
+                    FROM hybris_pagamentos_diretos
+                    WHERE nsu = %s AND authorization_code = %s
+                    LIMIT 1
+                """, (nsu, authorization_code))
+                row = cur.fetchone()
+            conn.close()
+            if not row:
+                return None
+            pedido, valor_pago, data_pagamento, tipo_venda, produto = row
+            return {
+                "pedido": pedido or "",
+                "valor_pago": valor_pago or "",
+                "data_pagamento": data_pagamento or "",
+                "tipo_venda": tipo_venda or "",
+                "produto": produto or ""
+            }
+        except psycopg2.Error as e:
+            print(f"❌ Erro ao verificar duplicidade em pagamentos diretos: {e}")
+            return None
