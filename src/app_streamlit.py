@@ -2276,47 +2276,100 @@ if transactions_data and not st.session_state.json_generated:
                         _bullets = "\n".join(f"- {e}" for e in _errors)
                         st.error(f"❌ **Erro na validação:**\n{_bullets}")
                 else:
-                    # Armazenar resultado em session_state
                     result_obj = json.loads(result)
-                    st.session_state.generated_result = result
-                    st.session_state.generated_result_obj = result_obj
-                    st.session_state.json_generated = True
 
-                    # Salvar cada transação no histórico do banco de dados
-                    _num_pedido = st.session_state.get("numero_pedido_input", "").strip()
-                    _nome_cli = st.session_state.get("nome_cliente_input", "").strip()
-                    _cpf_cli = st.session_state.get("cpf_cliente_input", "").strip()
-                    _gen_by = st.session_state.get("username", "")
-                    if _num_pedido and _cpf_cli:
-                        try:
-                            _db = PostgresManager()
-                            _db.ensure_pedidos_table_exists()  # garante que a tabela existe
-                            _saved = 0
-                            for _trans in result_obj.get("transactions", []):
-                                _ok = _db.save_pedido_transacao(
-                                    numero_pedido=_num_pedido,
-                                    nome_cliente=_nome_cli,
-                                    cpf_cliente=_cpf_cli,
-                                    transaction_id=_trans.get("id", ""),
-                                    amount=_trans.get("amount", 0),
-                                    terminal_number=str(_trans.get("number", "")),
-                                    authorization_code=str(_trans.get("authorization_code", "")),
-                                    generated_by=_gen_by
-                                )
-                                if _ok:
-                                    _saved += 1
-                            print(f"[db] {_saved} transação(ões) salva(s) para pedido {_num_pedido}")
-                            st.session_state["_db_save_count"] = _saved
-                            st.session_state["_db_save_pedido"] = _num_pedido
-                        except Exception as _db_err:
-                            print(f"[db] AVISO: Erro ao salvar histórico: {_db_err}")
-                            st.session_state["_db_save_count"] = 0
-                            st.session_state["_db_save_error"] = str(_db_err)
+                    # Verificar duplicidade de NSU (number) + Autenticação (authorization_code).
+                    # Juntos, esse par identifica um pagamento real único (comprovante físico).
+                    # Se já foi usado antes — mesmo para o mesmo pedido — bloquear a geração,
+                    # em vez de deixar reenviar o mesmo comprovante para pedidos diferentes
+                    # por erro humano (ou fraude).
+                    _duplicate = None
+                    try:
+                        _dup_db = PostgresManager()
+                        _dup_db.ensure_pedidos_table_exists()
+                        for _trans in result_obj.get("transactions", []):
+                            _nsu = str(_trans.get("number", "")).strip()
+                            _auth = str(_trans.get("authorization_code", "")).strip()
+                            _hit = _dup_db.find_duplicate_transaction(_nsu, _auth)
+                            if _hit:
+                                _duplicate = {**_hit, "nsu": _nsu, "authorization_code": _auth}
+                                break
+                    except Exception as _dup_err:
+                        print(f"[dup-check] AVISO: falha ao verificar duplicidade NSU/Autenticação: {_dup_err}")
+
+                    if _duplicate:
+                        st.markdown(f"""
+                        <div style="
+                            background-color: #3a1414;
+                            border: 1px solid #7a2222;
+                            border-radius: 10px;
+                            padding: 18px 22px;
+                            margin-bottom: 10px;
+                        ">
+                            <p style="color: #ff6b6b; font-weight: bold; font-size: 16px; margin: 0 0 14px 0;">
+                                ❌ NSU + Autenticação já utilizados — JSON não foi gerado
+                            </p>
+                            <div style="display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 14px;">
+                                <div>
+                                    <p style="color: #bbb; font-size: 12px; margin: 0;">NSU (number)</p>
+                                    <p style="color: #fff; font-size: 18px; font-weight: bold; margin: 2px 0 0 0;">{_duplicate['nsu']}</p>
+                                </div>
+                                <div>
+                                    <p style="color: #bbb; font-size: 12px; margin: 0;">Autenticação</p>
+                                    <p style="color: #fff; font-size: 18px; font-weight: bold; margin: 2px 0 0 0;">{_duplicate['authorization_code']}</p>
+                                </div>
+                            </div>
+                            <p style="color: #ddd; font-size: 13px; margin: 0 0 6px 0;">
+                                Esse comprovante já foi usado no pedido <b>{_duplicate['numero_pedido']}</b>
+                                ({_duplicate['nome_cliente'] or 'sem nome'}), gerado em {_duplicate['generated_at']}
+                                por <b>{_duplicate['generated_by'] or '—'}</b>.
+                            </p>
+                            <p style="color: #ddd; font-size: 13px; margin: 0;">
+                                Confira se este pedido não é uma duplicidade do comprovante acima antes de prosseguir.
+                            </p>
+                        </div>
+                        """, unsafe_allow_html=True)
                     else:
-                        print(f"[db] AVISO: numero_pedido ou cpf vazio — histórico não salvo")
-                        st.session_state["_db_save_count"] = -1  # CPF vazio
+                        # Armazenar resultado em session_state
+                        st.session_state.generated_result = result
+                        st.session_state.generated_result_obj = result_obj
+                        st.session_state.json_generated = True
 
-                    st.rerun()  # Reexecuta a página para mostrar resultado
+                        # Salvar cada transação no histórico do banco de dados
+                        _num_pedido = st.session_state.get("numero_pedido_input", "").strip()
+                        _nome_cli = st.session_state.get("nome_cliente_input", "").strip()
+                        _cpf_cli = st.session_state.get("cpf_cliente_input", "").strip()
+                        _gen_by = st.session_state.get("username", "")
+                        if _num_pedido and _cpf_cli:
+                            try:
+                                _db = PostgresManager()
+                                _db.ensure_pedidos_table_exists()  # garante que a tabela existe
+                                _saved = 0
+                                for _trans in result_obj.get("transactions", []):
+                                    _ok = _db.save_pedido_transacao(
+                                        numero_pedido=_num_pedido,
+                                        nome_cliente=_nome_cli,
+                                        cpf_cliente=_cpf_cli,
+                                        transaction_id=_trans.get("id", ""),
+                                        amount=_trans.get("amount", 0),
+                                        terminal_number=str(_trans.get("number", "")),
+                                        authorization_code=str(_trans.get("authorization_code", "")),
+                                        generated_by=_gen_by
+                                    )
+                                    if _ok:
+                                        _saved += 1
+                                print(f"[db] {_saved} transação(ões) salva(s) para pedido {_num_pedido}")
+                                st.session_state["_db_save_count"] = _saved
+                                st.session_state["_db_save_pedido"] = _num_pedido
+                            except Exception as _db_err:
+                                print(f"[db] AVISO: Erro ao salvar histórico: {_db_err}")
+                                st.session_state["_db_save_count"] = 0
+                                st.session_state["_db_save_error"] = str(_db_err)
+                        else:
+                            print(f"[db] AVISO: numero_pedido ou cpf vazio — histórico não salvo")
+                            st.session_state["_db_save_count"] = -1  # CPF vazio
+
+                        st.rerun()  # Reexecuta a página para mostrar resultado
 
     except json.JSONDecodeError as e:
         st.error(f"❌ Erro ao fazer parse do JSON do cabeçalho: {str(e)}")

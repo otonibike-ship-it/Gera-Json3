@@ -329,6 +329,7 @@ class PostgresManager:
                     CREATE INDEX IF NOT EXISTS idx_pedidos_numero ON hybris_pedidos(numero_pedido);
                     CREATE INDEX IF NOT EXISTS idx_pedidos_cpf ON hybris_pedidos(cpf_cliente);
                     CREATE INDEX IF NOT EXISTS idx_pedidos_generated_at ON hybris_pedidos(generated_at);
+                    CREATE INDEX IF NOT EXISTS idx_pedidos_nsu_auth ON hybris_pedidos(terminal_number, authorization_code);
                 """)
 
                 # Migração automática: copiar dados da tabela antiga 'pedidos_gerados' se existir
@@ -431,3 +432,46 @@ class PostgresManager:
         except psycopg2.Error as e:
             print(f"❌ Erro ao buscar histórico: {e}")
             return []
+
+    def find_duplicate_transaction(self, terminal_number: str, authorization_code: str):
+        """
+        Verifica se o par (NSU, Autenticação) já foi usado em algum pedido anterior.
+
+        NSU = terminal_number (campo 'number' do formulário)
+        Autenticação = authorization_code
+
+        Juntos, esse par identifica um pagamento real único (comprovante físico).
+        Se já existir no histórico — mesmo que para o mesmo número de pedido —
+        é sinal de erro humano (reenvio do mesmo comprovante) ou fraude.
+
+        Retorna o registro mais recente que colide, ou None se não houver duplicidade.
+        """
+        if not terminal_number or not authorization_code:
+            return None
+        try:
+            conn = self.get_connection()
+            if not conn:
+                return None
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT numero_pedido, nome_cliente, cpf_cliente, generated_at, generated_by
+                    FROM hybris_pedidos
+                    WHERE terminal_number = %s AND authorization_code = %s
+                    ORDER BY generated_at DESC
+                    LIMIT 1
+                """, (terminal_number, authorization_code))
+                row = cur.fetchone()
+            conn.close()
+            if not row:
+                return None
+            numero_pedido, nome_cliente, cpf_cliente, generated_at, generated_by = row
+            return {
+                "numero_pedido": numero_pedido,
+                "nome_cliente": nome_cliente,
+                "cpf_cliente": cpf_cliente,
+                "generated_at": generated_at.strftime("%d/%m/%Y %H:%M") if generated_at else "",
+                "generated_by": generated_by or ""
+            }
+        except psycopg2.Error as e:
+            print(f"❌ Erro ao verificar duplicidade NSU/Autenticação: {e}")
+            return None
