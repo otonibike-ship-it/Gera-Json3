@@ -22,12 +22,20 @@ class PostgresManager:
                 "Configure-as no Coolify (Settings → Environment Variables) antes de iniciar a aplicação."
             )
 
+        # Schema dedicado (evita depender do 'public', que em bancos
+        # compartilhados acumula tabelas de outros sistemas). Padrão
+        # 'public' mantém compatibilidade com ambientes que não definirem
+        # DB_SCHEMA.
+        schema = os.getenv('DB_SCHEMA', 'public')
+        self.schema = schema
+
         self.db_config = {
             'host': host,
             'port': int(os.getenv('DB_PORT', '5432')),
             'database': os.getenv('DB_NAME', 'postgres'),
             'user': os.getenv('DB_USER', 'postgres'),
-            'password': password
+            'password': password,
+            'options': f'-c search_path={schema}'
         }
 
     def get_connection(self):
@@ -47,6 +55,9 @@ class PostgresManager:
                 return False
 
             with conn.cursor() as cur:
+                # Garantir que o schema dedicado existe (no-op se DB_SCHEMA=public)
+                cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(self.schema)))
+
                 # Criar tabela se não existir
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS hybris_usuarios (
@@ -313,6 +324,9 @@ class PostgresManager:
             if not conn:
                 return False
             with conn.cursor() as cur:
+                # Garantir que o schema dedicado existe (no-op se DB_SCHEMA=public)
+                cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(self.schema)))
+
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS hybris_pedidos (
                         id SERIAL PRIMARY KEY,
