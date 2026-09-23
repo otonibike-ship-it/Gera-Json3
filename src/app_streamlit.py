@@ -618,8 +618,14 @@ def page_historico():
 # ═══════════════════════════════════════════════════════════════════════
 
 # Colunas do CSV: obrigatórias pra checar duplicidade + opcionais só pra exibição
+# (cabeçalho real da extração do time: data_pagamento, valor_pago, bandeira,
+# tipo_transacao, parcelas, nsu, cod_autorizacao, cartao, terminal, cod_lojista,
+# id_pagamento, valor_ordem_pgto, pedido, status_pedido, usuario)
 _PAGDIR_REQUIRED_COLS = {"nsu", "cod_autorizacao"}
-_PAGDIR_OPTIONAL_COLS = {"pedido", "valor_pago", "data_pagamento", "tipo_venda", "produto"}
+_PAGDIR_OPTIONAL_COLS = {
+    "pedido", "valor_pago", "data_pagamento", "bandeira",
+    "tipo_transacao", "parcelas", "terminal", "status_pedido", "usuario"
+}
 
 
 def _ler_csv_pagamentos_diretos(uploaded_file):
@@ -677,19 +683,6 @@ def page_pagamentos_diretos():
 
     with st.expander("📋 Query SQL para gerar o CSV no Hybris"):
         st.code("""SELECT
-  o.p_code AS pedido,
-  o.createdTS AS data_pedido,
-  (SELECT ev.Code FROM enumerationvalues ev WHERE ev.PK = o.p_status) AS status_pedido,
-  (SELECT pm.p_code FROM paymentmodes pm WHERE pm.PK = o.p_paymentmode) AS modo_pagamento,
-  (SELECT p.p_code FROM products p WHERE p.PK = oe.p_product) AS produto,
-  oe.p_totalprice AS valor_pedido,
-  (SELECT w.p_code FROM warehouses w WHERE w.PK = oe.p_warehouse) AS warehouse,
-  CASE
-    WHEN oe.p_warehouse = 8796158592981 THEN 'Venda Direta (1101)'
-    WHEN oe.p_warehouse = 8796388427733 THEN 'Venda RA (1104)'
-    ELSE 'Consignada/Franquia'
-  END AS tipo_venda,
-  gpo.p_id AS id_pagamento,
   pt.p_transactiondate AS data_pagamento,
   pt.p_amount AS valor_pago,
   pt.p_cardbrand AS bandeira,
@@ -698,16 +691,47 @@ def page_pagamentos_diretos():
   pt.p_nsu AS nsu,
   pt.p_authorizationcode AS cod_autorizacao,
   pt.p_maskedcreditcard AS cartao,
-  (SELECT u.p_uid FROM users u WHERE u.PK = o.p_user) AS usuario
-FROM orders o
-JOIN orderentries oe ON oe.p_order = o.PK
-LEFT JOIN glpaymentorder gpo ON gpo.p_order = o.PK
-LEFT JOIN glpaymenttransaction pt ON pt.p_order = gpo.PK
-ORDER BY o.createdTS DESC;""", language="sql")
+  pt.p_terminalnumber AS terminal,
+  pt.p_merchantcode AS cod_lojista,
+  gpo.p_id AS id_pagamento,
+  gpo.p_amount AS valor_ordem_pgto,
+  (SELECT o.p_code FROM orders o WHERE o.PK = gpo.p_order) AS pedido,
+  (SELECT ev.Code FROM enumerationvalues ev WHERE ev.PK = (SELECT o.p_status FROM orders o WHERE o.PK = gpo.p_order)) AS status_pedido,
+  (SELECT u.p_uid FROM users u WHERE u.PK = (SELECT o.p_user FROM orders o WHERE o.PK = gpo.p_order)) AS usuario
+FROM glpaymenttransaction pt
+JOIN glpaymentorder gpo ON pt.p_order = gpo.PK
+WHERE pt.p_transactiondate >= '2026-01-01 00:00:00'
+ORDER BY pt.p_transactiondate DESC;""", language="sql")
         st.caption(
-            "Exporte o resultado como CSV (com cabeçalho). As colunas obrigatórias "
-            "pro import são **nsu** e **cod_autorizacao** — as demais são só exibidas "
-            "quando uma duplicidade é encontrada."
+            "Ajuste a data no WHERE pra cobrir o período que quiser reexportar. "
+            "Exporte o resultado como CSV com cabeçalho."
+        )
+
+    with st.expander("📋 Colunas esperadas no CSV"):
+        st.markdown("""
+        **Obrigatórias** (sem elas a linha é ignorada):
+        - `nsu`
+        - `cod_autorizacao`
+
+        **Opcionais** (exibidas quando uma duplicidade é encontrada):
+        - `pedido`, `data_pagamento`, `valor_pago`, `bandeira`,
+          `tipo_transacao`, `parcelas`, `terminal`, `status_pedido`, `usuario`
+
+        Nomes de coluna não diferenciam maiúsculas/minúsculas, e o separador
+        (vírgula ou `;`) é detectado automaticamente. Colunas extras no CSV
+        são ignoradas sem problema.
+        """)
+        _modelo_csv = (
+            "pedido,data_pagamento,valor_pago,bandeira,tipo_transacao,parcelas,"
+            "nsu,cod_autorizacao,terminal,status_pedido,usuario\n"
+            "22584185,2026-09-23 20:49:27.0,3690.0,MASTERCARD,CREDITO PARCELADO LOJA,12,"
+            "742621,490972,719945,EM_PROCESSO_DE_SEPARACAO,usuario@s2bikeshop.com.br\n"
+        )
+        st.download_button(
+            "⬇️ Baixar modelo de CSV",
+            data=_modelo_csv,
+            file_name="modelo_pagamentos_diretos.csv",
+            mime="text/csv"
         )
 
     # Contador atual da tabela, pra dar visibilidade do que já foi importado
@@ -2464,8 +2488,9 @@ if transactions_data and not st.session_state.json_generated:
                                     "pedido": _hit_ext["pedido"],
                                     "detalhe": (
                                         f"pago em {_hit_ext['data_pagamento'] or '—'} · "
-                                        f"{_hit_ext['tipo_venda'] or '—'} · produto {_hit_ext['produto'] or '—'} · "
-                                        f"valor {_hit_ext['valor_pago'] or '—'} "
+                                        f"{_hit_ext['bandeira'] or '—'} {_hit_ext['tipo_transacao'] or ''} · "
+                                        f"valor {_hit_ext['valor_pago'] or '—'} · "
+                                        f"usuário {_hit_ext['usuario'] or '—'} "
                                         "(pagamento direto no Hybris, fora do Gera JSON)"
                                     )
                                 }

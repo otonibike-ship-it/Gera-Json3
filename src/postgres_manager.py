@@ -517,8 +517,12 @@ class PostgresManager:
                         authorization_code VARCHAR(100) NOT NULL,
                         valor_pago VARCHAR(50),
                         data_pagamento VARCHAR(50),
-                        tipo_venda VARCHAR(100),
-                        produto VARCHAR(100),
+                        bandeira VARCHAR(50),
+                        tipo_transacao VARCHAR(100),
+                        parcelas VARCHAR(10),
+                        terminal VARCHAR(50),
+                        status_pedido VARCHAR(50),
+                        usuario VARCHAR(150),
                         imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         imported_by VARCHAR(100),
                         UNIQUE (nsu, authorization_code)
@@ -556,21 +560,28 @@ class PostgresManager:
                         continue
                     cur.execute("""
                         INSERT INTO hybris_pagamentos_diretos
-                            (pedido, nsu, authorization_code, valor_pago,
-                             data_pagamento, tipo_venda, produto, imported_by)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            (pedido, nsu, authorization_code, valor_pago, data_pagamento,
+                             bandeira, tipo_transacao, parcelas, terminal, status_pedido,
+                             usuario, imported_by)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (nsu, authorization_code) DO UPDATE SET
                             pedido = EXCLUDED.pedido,
                             valor_pago = EXCLUDED.valor_pago,
                             data_pagamento = EXCLUDED.data_pagamento,
-                            tipo_venda = EXCLUDED.tipo_venda,
-                            produto = EXCLUDED.produto,
+                            bandeira = EXCLUDED.bandeira,
+                            tipo_transacao = EXCLUDED.tipo_transacao,
+                            parcelas = EXCLUDED.parcelas,
+                            terminal = EXCLUDED.terminal,
+                            status_pedido = EXCLUDED.status_pedido,
+                            usuario = EXCLUDED.usuario,
                             imported_at = CURRENT_TIMESTAMP,
                             imported_by = EXCLUDED.imported_by
                     """, (
                         row.get("pedido"), nsu, auth, row.get("valor_pago"),
-                        row.get("data_pagamento"), row.get("tipo_venda"),
-                        row.get("produto"), imported_by
+                        row.get("data_pagamento"), row.get("bandeira"),
+                        row.get("tipo_transacao"), row.get("parcelas"),
+                        row.get("terminal"), row.get("status_pedido"),
+                        row.get("usuario"), imported_by
                     ))
                     imported += 1
             conn.commit()
@@ -595,7 +606,8 @@ class PostgresManager:
                 return None
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT pedido, valor_pago, data_pagamento, tipo_venda, produto
+                    SELECT pedido, valor_pago, data_pagamento, bandeira,
+                           tipo_transacao, parcelas, terminal, status_pedido, usuario
                     FROM hybris_pagamentos_diretos
                     WHERE nsu = %s AND authorization_code = %s
                     LIMIT 1
@@ -604,13 +616,18 @@ class PostgresManager:
             conn.close()
             if not row:
                 return None
-            pedido, valor_pago, data_pagamento, tipo_venda, produto = row
+            (pedido, valor_pago, data_pagamento, bandeira,
+             tipo_transacao, parcelas, terminal, status_pedido, usuario) = row
             return {
                 "pedido": pedido or "",
                 "valor_pago": valor_pago or "",
                 "data_pagamento": data_pagamento or "",
-                "tipo_venda": tipo_venda or "",
-                "produto": produto or ""
+                "bandeira": bandeira or "",
+                "tipo_transacao": tipo_transacao or "",
+                "parcelas": parcelas or "",
+                "terminal": terminal or "",
+                "status_pedido": status_pedido or "",
+                "usuario": usuario or ""
             }
         except psycopg2.Error as e:
             print(f"❌ Erro ao verificar duplicidade em pagamentos diretos: {e}")
