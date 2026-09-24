@@ -647,12 +647,17 @@ def _ler_csv_pagamentos_diretos(uploaded_file):
     # campo (erro "new-line character seen in unquoted field").
     text = text.replace("\r\n", "\n").replace("\r", "\n")
 
-    try:
-        dialect = csv.Sniffer().sniff(text[:2000], delimiters=",;\t")
-    except csv.Error:
-        dialect = csv.excel  # separador vírgula, padrão
+    # csv.Sniffer erra com frequência em exportações brasileiras (o texto tem
+    # vírgulas e pontos-e-vírgula espalhados nos dados, não só no separador),
+    # então detectamos o delimitador pela linha de cabeçalho: o que aparece
+    # mais vezes nela é o separador real das colunas.
+    first_line = text.split("\n", 1)[0]
+    candidates = [";", ",", "\t"]
+    delimiter = max(candidates, key=first_line.count)
+    if first_line.count(delimiter) == 0:
+        delimiter = ","
 
-    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
     if not reader.fieldnames:
         return [], _PAGDIR_REQUIRED_COLS
 
