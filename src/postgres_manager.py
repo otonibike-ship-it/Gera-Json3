@@ -632,3 +632,67 @@ class PostgresManager:
         except psycopg2.Error as e:
             print(f"❌ Erro ao verificar duplicidade em pagamentos diretos: {e}")
             return None
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # OVERRIDE DE DUPLICIDADE (trocas de pedido legítimas)
+    # ═══════════════════════════════════════════════════════════════════════
+    # Quando um comprovante (NSU + Autenticação) já usado é reaproveitado de
+    # propósito numa troca de pedido (cliente troca de bicicleta por tamanho
+    # ou defeito), o usuário pode liberar a geração mesmo assim. Registramos
+    # quem liberou e quando, para manter rastreabilidade do anti-fraude.
+
+    def ensure_duplicate_overrides_table_exists(self) -> bool:
+        """Cria tabela hybris_duplicate_overrides (auditoria de liberações manuais)"""
+        try:
+            conn = self.get_connection()
+            if not conn:
+                return False
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(self.schema)))
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS hybris_duplicate_overrides (
+                        id SERIAL PRIMARY KEY,
+                        numero_pedido VARCHAR(20) NOT NULL,
+                        nsu VARCHAR(100),
+                        authorization_code VARCHAR(100),
+                        source VARCHAR(20),
+                        pedido_original VARCHAR(50),
+                        overridden_by VARCHAR(100),
+                        overridden_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_overrides_numero ON hybris_duplicate_overrides(numero_pedido);
+                    CREATE INDEX IF NOT EXISTS idx_overrides_nsu_auth ON hybris_duplicate_overrides(nsu, authorization_code);
+                """)
+            conn.commit()
+            conn.close()
+            return True
+        except psycopg2.Error as e:
+            print(f"❌ Erro ao criar tabela hybris_duplicate_overrides: {e}")
+            return False
+
+    def log_duplicate_override(
+        self,
+        numero_pedido: str,
+        nsu: str,
+        authorization_code: str,
+        source: str,
+        pedido_original: str,
+        overridden_by: str
+    ) -> bool:
+        """Registra que um usuário liberou a geração apesar de NSU/Autenticação duplicados"""
+        try:
+            conn = self.get_connection()
+            if not conn:
+                return False
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO hybris_duplicate_overrides
+                        (numero_pedido, nsu, authorization_code, source, pedido_original, overridden_by)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (numero_pedido, nsu, authorization_code, source, pedido_original, overridden_by))
+            conn.commit()
+            conn.close()
+            return True
+        except psycopg2.Error as e:
+            print(f"❌ Erro ao registrar liberação de duplicidade: {e}")
+            return False

@@ -2510,40 +2510,23 @@ if transactions_data and not st.session_state.json_generated:
                         print(f"[dup-check] AVISO: falha ao verificar duplicidade NSU/Autenticação: {_dup_err}")
 
                     if _duplicate:
-                        _titulo = (
-                            "❌ NSU + Autenticação já utilizados em outro pedido — JSON não foi gerado"
-                            if _duplicate["source"] == "interno"
-                            else "❌ NSU + Autenticação já são um pagamento direto no Hybris — JSON não foi gerado"
-                        )
-                        st.markdown(f"""
-                        <div style="
-                            background-color: #3a1414;
-                            border: 1px solid #7a2222;
-                            border-radius: 10px;
-                            padding: 18px 22px;
-                            margin-bottom: 10px;
-                        ">
-                            <p style="color: #ff6b6b; font-weight: bold; font-size: 16px; margin: 0 0 14px 0;">
-                                {_titulo}
-                            </p>
-                            <div style="display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 14px;">
-                                <div>
-                                    <p style="color: #bbb; font-size: 12px; margin: 0;">NSU (number)</p>
-                                    <p style="color: #fff; font-size: 18px; font-weight: bold; margin: 2px 0 0 0;">{_duplicate['nsu']}</p>
-                                </div>
-                                <div>
-                                    <p style="color: #bbb; font-size: 12px; margin: 0;">Autenticação</p>
-                                    <p style="color: #fff; font-size: 18px; font-weight: bold; margin: 2px 0 0 0;">{_duplicate['authorization_code']}</p>
-                                </div>
-                            </div>
-                            <p style="color: #ddd; font-size: 13px; margin: 0 0 6px 0;">
-                                Esse comprovante já foi usado no pedido <b>{_duplicate['pedido']}</b> ({_duplicate['detalhe']}).
-                            </p>
-                            <p style="color: #ddd; font-size: 13px; margin: 0;">
-                                Confira se este pedido não é uma duplicidade do comprovante acima antes de prosseguir.
-                            </p>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        # Não bloqueia de forma definitiva: guarda o resultado já gerado
+                        # em session_state e deixa o usuário liberar mesmo assim (ex: troca
+                        # de pedido — mesmo comprovante reaproveitado de propósito). O aviso
+                        # e o botão de liberação são renderizados no bloco persistente abaixo
+                        # (fora deste gate), pois sobrevive ao rerun do clique do botão.
+                        _num_pedido_dup = st.session_state.get("numero_pedido_input", "").strip()
+                        _nome_cli_dup = st.session_state.get("nome_cliente_input", "").strip()
+                        _cpf_cli_dup = st.session_state.get("cpf_cliente_input", "").strip()
+                        st.session_state["_pending_duplicate"] = {
+                            "duplicate": _duplicate,
+                            "result": result,
+                            "result_obj": result_obj,
+                            "num_pedido": _num_pedido_dup,
+                            "nome_cli": _nome_cli_dup,
+                            "cpf_cli": _cpf_cli_dup,
+                            "gen_by": st.session_state.get("username", ""),
+                        }
                     else:
                         # Armazenar resultado em session_state
                         st.session_state.generated_result = result
@@ -2596,6 +2579,107 @@ if transactions_data and not st.session_state.json_generated:
     except Exception as e:
         st.error(f"❌ Erro ao gerar JSON: {str(e)}")
         st.exception(e)
+
+# MOSTRAR AVISO DE DUPLICIDADE PENDENTE (com opção de liberar por troca de pedido)
+# Fica fora do gate de geração acima porque precisa sobreviver ao rerun causado
+# pelo clique do botão "Gerar mesmo assim".
+if st.session_state.get("_pending_duplicate"):
+    _pd = st.session_state["_pending_duplicate"]
+    _duplicate = _pd["duplicate"]
+    _titulo = (
+        "❌ NSU + Autenticação já utilizados em outro pedido"
+        if _duplicate["source"] == "interno"
+        else "❌ NSU + Autenticação já são um pagamento direto no Hybris"
+    )
+    st.markdown(f"""
+    <div style="
+        background-color: #3a1414;
+        border: 1px solid #7a2222;
+        border-radius: 10px;
+        padding: 18px 22px;
+        margin-bottom: 10px;
+    ">
+        <p style="color: #ff6b6b; font-weight: bold; font-size: 16px; margin: 0 0 14px 0;">
+            {_titulo}
+        </p>
+        <div style="display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 14px;">
+            <div>
+                <p style="color: #bbb; font-size: 12px; margin: 0;">NSU (number)</p>
+                <p style="color: #fff; font-size: 18px; font-weight: bold; margin: 2px 0 0 0;">{_duplicate['nsu']}</p>
+            </div>
+            <div>
+                <p style="color: #bbb; font-size: 12px; margin: 0;">Autenticação</p>
+                <p style="color: #fff; font-size: 18px; font-weight: bold; margin: 2px 0 0 0;">{_duplicate['authorization_code']}</p>
+            </div>
+        </div>
+        <p style="color: #ddd; font-size: 13px; margin: 0 0 6px 0;">
+            Esse comprovante já foi usado no pedido <b>{_duplicate['pedido']}</b> ({_duplicate['detalhe']}).
+        </p>
+        <p style="color: #ddd; font-size: 13px; margin: 0;">
+            Se for uma troca de pedido legítima (mesmo comprovante reaproveitado de propósito), você pode liberar a geração mesmo assim abaixo. Caso contrário, confira se não é duplicidade antes de prosseguir.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    _col_liberar, _col_cancelar = st.columns([1, 1])
+    with _col_liberar:
+        if st.button("⚠️ Gerar mesmo assim (troca de pedido)", key="btn_override_dup"):
+            _result = _pd["result"]
+            _result_obj = _pd["result_obj"]
+            _num_pedido = _pd["num_pedido"]
+            _nome_cli = _pd["nome_cli"]
+            _cpf_cli = _pd["cpf_cli"]
+            _gen_by = _pd["gen_by"]
+
+            st.session_state.generated_result = _result
+            st.session_state.generated_result_obj = _result_obj
+            st.session_state.json_generated = True
+
+            if _num_pedido and _cpf_cli:
+                try:
+                    _db = PostgresManager()
+                    _db.ensure_pedidos_table_exists()
+                    _saved = 0
+                    for _trans in _result_obj.get("transactions", []):
+                        _ok = _db.save_pedido_transacao(
+                            numero_pedido=_num_pedido,
+                            nome_cliente=_nome_cli,
+                            cpf_cliente=_cpf_cli,
+                            transaction_id=_trans.get("id", ""),
+                            amount=_trans.get("amount", 0),
+                            terminal_number=str(_trans.get("number", "")),
+                            authorization_code=str(_trans.get("authorization_code", "")),
+                            generated_by=_gen_by
+                        )
+                        if _ok:
+                            _saved += 1
+                    print(f"[db] {_saved} transação(ões) salva(s) para pedido {_num_pedido} (com override de duplicidade)")
+                    st.session_state["_db_save_count"] = _saved
+                    st.session_state["_db_save_pedido"] = _num_pedido
+
+                    _db.ensure_duplicate_overrides_table_exists()
+                    _db.log_duplicate_override(
+                        numero_pedido=_num_pedido,
+                        nsu=_duplicate["nsu"],
+                        authorization_code=_duplicate["authorization_code"],
+                        source=_duplicate["source"],
+                        pedido_original=_duplicate["pedido"],
+                        overridden_by=_gen_by
+                    )
+                except Exception as _db_err:
+                    print(f"[db] AVISO: Erro ao salvar histórico/override: {_db_err}")
+                    st.session_state["_db_save_count"] = 0
+                    st.session_state["_db_save_error"] = str(_db_err)
+            else:
+                print(f"[db] AVISO: numero_pedido ou cpf vazio — histórico não salvo")
+                st.session_state["_db_save_count"] = -1
+
+            del st.session_state["_pending_duplicate"]
+            st.rerun()
+    with _col_cancelar:
+        if st.button("Cancelar", key="btn_cancel_dup"):
+            del st.session_state["_pending_duplicate"]
+            st.rerun()
 
 # MOSTRAR RESULTADO ARMAZENADO
 # Mostrar resultado apenas se JSON já foi gerado (evita regeneração ao editar transações)
