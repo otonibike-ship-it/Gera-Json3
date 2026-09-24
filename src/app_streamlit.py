@@ -641,6 +641,12 @@ def _ler_csv_pagamentos_diretos(uploaded_file):
     except UnicodeDecodeError:
         text = raw.decode("latin-1")
 
+    # Normaliza fim de linha (CRLF do Windows, CR sozinho de exportações antigas,
+    # ou uma mistura dos dois) para \n — sem isso, io.StringIO não quebra as
+    # linhas corretamente e o csv acha que há uma quebra de linha "dentro" do
+    # campo (erro "new-line character seen in unquoted field").
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
     try:
         dialect = csv.Sniffer().sniff(text[:2000], delimiters=",;\t")
     except csv.Error:
